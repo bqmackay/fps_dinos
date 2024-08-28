@@ -24,11 +24,16 @@ let strafeRight = false;
 let rotateLeft = false;
 let rotateRight = false;
 
-let audioContext, gunSound;
+let audioContext, gunSound, biteSound;
 
 const FIELD_SIZE = 100; // Assuming the ground plane is 100x100 units
 
 let minimapCanvas, minimapContext;
+
+const ATTACK_INTERVAL = 1000; // 1 second between attacks
+const ATTACK_RANGE = 2; // Distance at which dinosaurs stop and attack
+let playerHealth = 10;
+let lastAttackTimes = {}; // To track last attack time for each dinosaur
 
 function init() {
     // Create scene
@@ -52,7 +57,7 @@ function init() {
     // Add a simple ground
     const groundGeometry = new THREE.PlaneGeometry(100, 100);
     const groundMaterial = new THREE.MeshBasicMaterial({ color: 0x90EE90 }); // Light green ground
-    const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+    const grougnd = new THREE.Mesh(groundGeometry, groundMaterial);
     ground.rotation.x = -Math.PI / 2;
     scene.add(ground);
 
@@ -80,8 +85,7 @@ function init() {
     document.addEventListener('keyup', onKeyUp, false);
 
     // Initialize audio
-    audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    loadGunSound();
+    loadSounds();
 
     // Initialize minimap
     minimapCanvas = document.getElementById('minimap');
@@ -221,6 +225,7 @@ function spawnEnemy() {
     const geometry = new THREE.BoxGeometry(1, 2, 1); // Simple dinosaur shape
     const material = new THREE.MeshPhongMaterial({ color: isSlowActive ? 0x0000FF : 0x8B3A3A }); // Reddish-brown color
     const dinosaur = new THREE.Mesh(geometry, material);
+    dinosaur.id = Math.random().toString(36).substr(2, 9); // Add a unique id
 
     // Spawn in front of the player
     const spawnRadius = 20 + Math.random() * 10; // Spawn between 20-30 units away
@@ -244,6 +249,7 @@ function spawnEnemy() {
 
     scene.add(dinosaur);
     enemies.push(dinosaur);
+    lastAttackTimes[dinosaur.id] = 0; // Initialize last attack time
 }
 
 function spawnPowerup() {
@@ -353,21 +359,95 @@ function updateEnemies() {
         lastSpawnTime = currentTime;
     }
 
-    // Move enemies towards the player
+    // Move enemies towards the player or attack
     const speed = isSlowActive ? slowSpeed : normalSpeed;
     enemies.forEach(enemy => {
-        const direction = new THREE.Vector3()
-            .subVectors(player.position, enemy.position)
-            .normalize();
-        enemy.position.add(direction.multiplyScalar(speed));
+        const distanceToPlayer = enemy.position.distanceTo(player.position);
+
+        if (distanceToPlayer > ATTACK_RANGE) {
+            // Move towards player
+            const direction = new THREE.Vector3()
+                .subVectors(player.position, enemy.position)
+                .normalize();
+            enemy.position.add(direction.multiplyScalar(speed));
+        } else {
+            // Attack player
+            if (!lastAttackTimes[enemy.id] || currentTime - lastAttackTimes[enemy.id] >= ATTACK_INTERVAL) {
+                attackPlayer(enemy);
+                lastAttackTimes[enemy.id] = currentTime;
+            }
+        }
 
         // Make the enemy face the player
         enemy.lookAt(player.position);
     });
 }
 
+function attackPlayer(enemy) {
+    playerHealth -= 1;
+    console.log(`Player attacked! Health: ${playerHealth}`);
+    if (playerHealth <= 0) {
+        gameOver();
+    }
+
+    // Play bite sound
+    playBiteSound();
+
+    // Determine attack direction and show flashing bar
+    showAttackDirection(enemy);
+}
+
+function showAttackDirection(enemy) {
+    const playerDirection = new THREE.Vector3();
+    player.getWorldDirection(playerDirection);
+    const toEnemy = new THREE.Vector3().subVectors(enemy.position, player.position).normalize();
+
+    const angle = playerDirection.angleTo(toEnemy);
+    const cross = new THREE.Vector3().crossVectors(playerDirection, toEnemy).y;
+
+    let directions = [];
+
+    if (angle < Math.PI / 4) {
+        // Enemy is in behind
+        directions = ['bottom'];
+    } else if (angle > 3 * Math.PI / 4) {
+        // Enemy is front
+        directions = ['top', 'left', 'right', 'bottom'];
+    } else if (cross > 0) {
+        // Enemy is to the right
+        directions = ['right'];
+    } else {
+        // Enemy is to the left
+        directions = ['left'];
+    }
+
+    flashAttackBars(directions);
+}
+
+function flashAttackBars(directions) {
+    directions.forEach(direction => {
+        const bar = document.createElement('div');
+        bar.className = `attack-bar ${direction}`;
+        document.body.appendChild(bar);
+
+        bar.style.opacity = '1';
+        setTimeout(() => {
+            bar.style.opacity = '0';
+            setTimeout(() => {
+                document.body.removeChild(bar);
+            }, 800);
+        }, 0);
+    });
+}
+
+function gameOver() {
+    console.log("Game Over!");
+    // Add any game over logic here (e.g., stop the game, show a message)
+}
+
 function updateHUD() {
     document.getElementById('dino-counter').textContent = `Dinos hit: ${dinoHitCount}`;
+    document.getElementById('player-health').textContent = `Health: ${playerHealth}`;
     
     const reloadIndicator = document.getElementById('reload-indicator');
     const progress = (Date.now() - lastShootTime) / shootCooldown;
@@ -461,16 +541,20 @@ function updatePlayerPosition() {
     }
 }
 
-function loadGunSound() {
+function loadSounds() {
+    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    loadSound('gunshot.mp3', buffer => gunSound = buffer);
+    loadSound('bite.mp3', buffer => biteSound = buffer);
+}
+
+function loadSound(url, onLoad) {
     const request = new XMLHttpRequest();
-    request.open('GET', 'gunshot.mp3', true);
+    request.open('GET', url, true);
     request.responseType = 'arraybuffer';
 
     request.onload = function() {
-        audioContext.decodeAudioData(request.response, function(buffer) {
-            gunSound = buffer;
-        }, function(error) {
-            console.error('Error decoding gun sound:', error);
+        audioContext.decodeAudioData(request.response, onLoad, function(error) {
+            console.error('Error decoding sound:', error);
         });
     };
     request.send();
@@ -480,6 +564,15 @@ function playGunSound() {
     if (gunSound) {
         const source = audioContext.createBufferSource();
         source.buffer = gunSound;
+        source.connect(audioContext.destination);
+        source.start(0);
+    }
+}
+
+function playBiteSound() {
+    if (biteSound) {
+        const source = audioContext.createBufferSource();
+        source.buffer = biteSound;
         source.connect(audioContext.destination);
         source.start(0);
     }
@@ -500,6 +593,19 @@ function updateMinimap() {
     minimapContext.beginPath();
     minimapContext.arc(playerX, playerZ, 3, 0, Math.PI * 2);
     minimapContext.fill();
+
+    // Draw player direction pointer
+    const pointerLength = 8; // Length of the direction pointer
+    const playerAngle = player.rotation.y;
+    const pointerEndX = playerX - Math.sin(playerAngle) * pointerLength;
+    const pointerEndZ = playerZ - Math.cos(playerAngle) * pointerLength;
+
+    minimapContext.strokeStyle = 'white';
+    minimapContext.lineWidth = 2;
+    minimapContext.beginPath();
+    minimapContext.moveTo(playerX, playerZ);
+    minimapContext.lineTo(pointerEndX, pointerEndZ);
+    minimapContext.stroke();
 
     // Draw dinosaurs (red or blue dots depending on slow effect)
     enemies.forEach(enemy => {

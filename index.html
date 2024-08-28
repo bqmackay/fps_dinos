@@ -41,11 +41,42 @@
             left: 10px;
             border: 2px solid white;
         }
+        .attack-bar {
+            position: fixed;
+            background-color: rgba(255, 0, 0, 0.5);
+            transition: opacity 0.8s ease-in-out;
+            opacity: 0;
+        }
+        .attack-bar.top {
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 100px;
+        }
+        .attack-bar.bottom {
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 100px;
+        }
+        .attack-bar.left {
+            top: 0;
+            left: 0;
+            bottom: 0;
+            width: 100px;
+        }
+        .attack-bar.right {
+            top: 0;
+            right: 0;
+            bottom: 0;
+            width: 100px;
+        }
     </style>
 </head>
 <body>
     <div id="hud">
         <span id="dino-counter">Dinos hit: 0</span>
+        <span id="player-health">Health: 10</span>
         <div id="reload-indicator"></div>
     </div>
     <div id="tutorial">
